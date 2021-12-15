@@ -1379,7 +1379,40 @@ static void encoder_buffer_callback(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buf
             }
             else
             {
-               bytes_written = fwrite(buffer->data, 1, buffer->length, pData->file_handle);
+               #ifndef MIN
+                  #define MIN(a,b) (a<b?a:b)
+               #endif
+               const unsigned pktsz = 8192;
+               bytes_written = 0;
+               unsigned header[4] = {0};
+               int splitted = (int)(buffer->length / pktsz) + ((buffer->length % pktsz)==0?0:1);
+               for(int n = 0;n < splitted; n++) {
+                   int trgtlen = MIN(pktsz, buffer->length - bytes_written);
+                   if ((n+1) == splitted) {
+                      header[2] = htonl(1<<31 | n);
+                   } else {
+                      header[2] = htonl(n);
+                   }
+                   header[0] = htonl(0xdeadbeaf);
+                   header[3] = htonl(trgtlen);
+
+                   if (fwrite(header, sizeof(header), 1, pData->file_handle) != 1) {
+                      vcos_log_error("header write aborting(%d)", bytes_written);
+                      break;
+                   }
+                   int sended = fwrite(
+                           (char*)buffer->data + bytes_written,
+                           1,
+                           trgtlen,
+                           pData->file_handle
+                       );
+                   if (sended != trgtlen) {
+                      vcos_log_error("(%d from %d..%d)- aborting", sended, buffer->length - bytes_written, trgtlen);
+                      break;
+                   }
+                   bytes_written += sended;
+               }
+
                if(pData->flush_buffers)
                {
                    fflush(pData->file_handle);
